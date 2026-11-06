@@ -118,6 +118,14 @@ select, input[type=number] {
   border-radius: 6px; background: #fff;
 }
 .qfig .hint { color: #64748b; font-size: .75rem; margin-top: 4px; }
+.shared-stem {
+  background: #0f172a; border: 1px solid var(--accent); border-radius: 12px;
+  padding: 12px; margin: 0 0 12px; font-size: 1rem; line-height: 1.55;
+  white-space: pre-wrap; word-break: break-word;
+}
+.shared-stem .stem-label { color: var(--accent); font-weight: 700; font-size: .9rem; margin-bottom: 6px; }
+.stem-flag { color: var(--accent2); font-size: .92rem; line-height: 1.45; margin-top: 8px; }
+.opt.flagged { border-color: var(--accent2); }
 #fig-lightbox {
   display: none; position: fixed; inset: 0; z-index: 100;
   background: rgba(2,6,23,.92); align-items: center; justify-content: center;
@@ -167,6 +175,7 @@ select, input[type=number] {
       <button class="btn secondary" id="btn-review">📕 錯題本</button>
     </div>
     <button class="btn ghost" id="btn-clear-wrong" style="margin-top:8px">清空錯題本</button>
+    <p class="footer-note">承上題以題組出題：整組抽題、依原題號接續，每題都看得到共用題幹。</p>
     <p class="footer-note" id="pool-info">可出題：0</p>
   </div>
 </section>
@@ -181,6 +190,7 @@ select, input[type=number] {
   <div class="progress"><i id="progress-bar"></i></div>
   <div class="card">
     <div class="qmeta" id="q-meta"></div>
+    <div class="shared-stem" id="q-stem" style="display:none"></div>
     <p class="qtext" id="q-text"></p>
     <div class="qfig" id="q-fig" style="display:none">
       <img id="q-fig-img" alt="本題附圖" />
@@ -229,6 +239,7 @@ const state = {
   locked: false,
   picked: new Set(),
   mode: "play", // play | review
+  limitNote: "",
 };
 
 function loadWrong() {
@@ -253,6 +264,185 @@ function addWrong(q) {
 }
 function removeWrong(q) {
   saveWrong(loadWrong().filter(x => qKey(x) !== qKey(q)));
+}
+
+
+// Follow-up items (承上題／同上／處方同第N題) stay with the stem that makes them answerable.
+// Stems are copied from the original questions. Obscured source text is flagged, never invented.
+const QUESTION_GROUPS = [
+  {
+    id: "px114-density",
+    label: "藥劑學(二) 114期中 粉體密度",
+    originalNums: "第13、14、16題",
+    sharedStem: "某粉體 ρbulk = 1.25、ρgranule = 2.0，Vbulk = 8、Vgranule = 5、Vtrue = 4",
+    caveat: "",
+    members: [
+      { subject: "藥劑學(二)", source: "114期中 第13題", q: "某粉體 ρbulk" },
+      { subject: "藥劑學(二)", source: "114期中 第14題", q: "承上題，此粉體之真密度" },
+      { subject: "藥劑學(二)", source: "114期中 第16題", q: "承第 13 題，此粉體之 Hausner" }
+    ]
+  },
+  {
+    id: "px114-rx",
+    label: "藥劑學(二) 114期中 處方",
+    originalNums: "第12、29題",
+    sharedStem: "處方：1.API 50、2.Lactose 100、3.Methylcellulose 50、4.Starch 50、5.Avicel PH-101 50、6.Talc 25（mg）。",
+    caveat: "",
+    members: [
+      { subject: "藥劑學(二)", source: "114期中 第12題", q: "處方：1.API 50" },
+      { subject: "藥劑學(二)", source: "114期中 第29題", q: "處方同第 12 題" }
+    ]
+  },
+  {
+    id: "da109-naproxen",
+    label: "藥物分析 109期中 Naproxen 滯留時間",
+    originalNums: "原卷相鄰兩題",
+    sharedStem: "酸性藥品Naproxen(pKa 4.2)在ODS層析管(t0=2.0, mobile phase→acetonitrile:0.05M buffer pH5.2=40:60),其Rt=8.00min",
+    caveat: "",
+    members: [
+      { subject: "藥物分析", source: "109期中", q: "酸性藥品Naproxen" },
+      { subject: "藥物分析", source: "109期中", q: "承上題,實際的分析結果其Rt值" }
+    ]
+  },
+  {
+    id: "da109-validation",
+    label: "藥物分析 109期中 藥典確效特性",
+    originalNums: "原卷相鄰兩題",
+    sharedStem: "中華藥典(第VIII版)把需要評估分析方法確效的第一類主成分、活性成分或防腐劑之含量測定法,下列確效特性何者不被列為常態評估?",
+    caveat: "原卷含量測定題的題幹有部分影像遮蔽。遮蔽處不臆造、不補寫；選項只沿用題庫已標示的文字（含「題幹部分影像遮蔽」）。",
+    members: [
+      { subject: "藥物分析", source: "109期中", q: "中華藥典(第VIII版)把需要評估分析方法確效" },
+      { subject: "藥物分析", source: "109期中", q: "同上,雜質的限量分析方法" }
+    ]
+  },
+  {
+    id: "pharm-digoxin",
+    label: "藥理學 112 小考 Digoxin 劑量",
+    originalNums: "第29、30題",
+    sharedStem: "Digoxin目標濃度2 ng/mL，CL為3.125 L/h，口服F為50%，Vd為250 L",
+    caveat: "",
+    members: [
+      { subject: "藥理學", source: "112 小考(練習題3) 第29題", q: "Digoxin目標濃度" },
+      { subject: "藥理學", source: "112 小考(練習題3) 第30題", q: "同上題，每天口服給予的維持劑量" }
+    ]
+  },
+  {
+    id: "pharm-terfenadine",
+    label: "藥理學 106 期中 Terfenadine",
+    originalNums: "第2、3題",
+    sharedStem: "Terfenadine若合併下列何種藥物使用，最容易產生心室性心律不整？",
+    caveat: "",
+    members: [
+      { subject: "藥理學", source: "106 期中考古 第2題", q: "Terfenadine若合併下列何種藥物" },
+      { subject: "藥理學", source: "106 期中考古 第3題", q: "承上題，引起心律不整的原因" }
+    ]
+  }
+];
+
+function bindQuestionGroups(list) {
+  const used = new Set();
+  for (const g of QUESTION_GROUPS) {
+    g._qs = [];
+    for (const m of g.members) {
+      const hits = list.filter(q =>
+        !used.has(q) &&
+        q.subject === m.subject &&
+        q.source === m.source &&
+        String(q.question || "").startsWith(m.q)
+      );
+      if (hits.length !== 1) {
+        throw new Error("題組對應失敗 " + g.id + " / " + m.source + "（" + hits.length + "）");
+      }
+      used.add(hits[0]);
+      g._qs.push(hits[0]);
+    }
+    g._qs.forEach((q, i) => {
+      q.groupId = g.id;
+      q.groupLabel = g.label;
+      q.groupNums = g.originalNums;
+      q.groupStem = g.sharedStem;
+      q.groupCaveat = g.caveat || "";
+      q.groupPos = i;
+      q.groupSize = g._qs.length;
+    });
+  }
+}
+
+function groupMeta(q) {
+  if (!q) return q;
+  if (q.groupId) return q;
+  if (typeof QUESTIONS === "undefined") return q;
+  const canon = QUESTIONS.find(x => x.subject === q.subject && x.source === q.source && x.question === q.question);
+  return canon && canon.groupId ? canon : q;
+}
+
+function packUnits(filtered) {
+  const selected = new Set(filtered.map(qKey));
+  const groupedKeys = new Set();
+  const units = [];
+  for (const g of QUESTION_GROUPS) {
+    const members = g._qs || [];
+    if (!members.length || !members.some(q => selected.has(qKey(q)))) continue;
+    members.forEach(q => groupedKeys.add(qKey(q)));
+    units.push(members.slice());
+  }
+  for (const q of filtered) {
+    if (groupedKeys.has(qKey(q))) continue;
+    units.push([q]);
+  }
+  return units;
+}
+
+function expandUnits(units, limit) {
+  const shuffled = shuffle(units);
+  if (!limit) return { order: shuffled.flat(), note: "" };
+  const order = [];
+  let n = 0;
+  let keptOversize = false;
+  for (const unit of shuffled) {
+    if (n + unit.length <= limit) {
+      order.push(...unit);
+      n += unit.length;
+      if (n === limit) break;
+      continue;
+    }
+    if (n === 0 && unit.length > 1) {
+      order.push(...unit);
+      keptOversize = true;
+      break;
+    }
+  }
+  const note = keptOversize ? "題組不拆開，本題數多於上限" : "";
+  return { order, note };
+}
+
+function optionIsObscured(opt) {
+  return /影像遮蔽|【模糊】|【不清】|【補/.test(String(opt || ""));
+}
+
+function obscurityNote(q) {
+  const where = [];
+  if (/影像遮蔽|【模糊】|【不清】|【補/.test(String(q.question || ""))) where.push("題幹");
+  if ((q.options || []).some(optionIsObscured)) where.push("選項");
+  if (!where.length) return "";
+  return "原卷" + where.join("與") + "有遮蔽或模糊處，缺漏文字不臆造。";
+}
+
+function renderSharedStem(gm) {
+  const el = $("q-stem");
+  if (!el) return;
+  if (!gm || !gm.groupStem) {
+    el.style.display = "none";
+    el.innerHTML = "";
+    return;
+  }
+  const pos = (gm.groupPos || 0) + 1;
+  const size = gm.groupSize || 1;
+  let html = `<div class="stem-label">共用題幹 · ${escapeHtml(gm.groupLabel)} · 原題${escapeHtml(gm.groupNums)} · 組內第 ${pos}/${size} 題</div>`;
+  html += `<div>${escapeHtml(gm.groupStem)}</div>`;
+  if (gm.groupCaveat) html += `<div class="stem-flag">${escapeHtml(gm.groupCaveat)}</div>`;
+  el.innerHTML = html;
+  el.style.display = "block";
 }
 
 function subjectsInBank() {
@@ -332,9 +522,11 @@ function filteredPool(base) {
 }
 
 function updatePoolInfo() {
-  const n = filteredPool(QUESTIONS).length;
+  const pool = filteredPool(QUESTIONS);
+  const n = pool.length;
   const w = loadWrong().length;
-  $("pool-info").textContent = `可出題：${n}　｜　錯題本：${w} 題`;
+  const groups = packUnits(pool).filter(u => u.length > 1).length;
+  $("pool-info").textContent = `可出題：${n}　｜　題組：${groups}　｜　錯題本：${w} 題`;
   $("btn-start").disabled = n === 0;
   $("btn-review").disabled = w === 0;
 }
@@ -368,8 +560,10 @@ function startGame(mode) {
   if (!state.pool.length) { alert("目前沒有符合條件的題目"); return; }
   let limit = parseInt($("q-limit").value, 10);
   if (!Number.isFinite(limit) || limit < 0) limit = 0;
-  state.order = shuffle(state.pool);
-  if (limit > 0) state.order = state.order.slice(0, limit);
+  const built = expandUnits(packUnits(state.pool), limit);
+  state.order = built.order;
+  state.limitNote = built.note;
+  if (!state.order.length) { alert("目前沒有符合條件的題目"); return; }
   state.idx = 0;
   state.score = 0;
   state.streak = 0;
@@ -434,14 +628,19 @@ function renderQuestion() {
   $("progress-bar").style.width = ((state.idx / total) * 100) + "%";
   const date = q.exam_date || EXAM_DATES[q.subject] || "";
   const typeTag = qtype === "multi" ? "複選" : (qtype === "fill" ? "填空／簡答" : "單選");
+  const gm = groupMeta(q);
+  const groupTag = gm.groupId ? `<span class="tag">題組 ${gm.groupPos + 1}/${gm.groupSize}</span>` : "";
   $("q-meta").innerHTML = [
     `<span class="tag">${escapeHtml(q.subject)}${date ? " · 考 "+escapeHtml(date) : ""}</span>`,
     `<span class="tag">${escapeHtml(q.source_type || "")}／${escapeHtml(q.source || "")}</span>`,
     `<span class="tag">${escapeHtml(q.chapter || "")}</span>`,
     `<span class="tag">${escapeHtml(typeTag)}</span>`,
-    `<span class="tag">${state.idx+1} / ${total}</span>`,
-    state.mode === "review" ? `<span class="tag">錯題本</span>` : ""
+    groupTag,
+    `<span class="tag">第 ${state.idx+1} / ${total} 題</span>`,
+    state.mode === "review" ? `<span class="tag">錯題本</span>` : "",
+    state.limitNote ? `<span class="tag">${escapeHtml(state.limitNote)}</span>` : ""
   ].join("");
+  renderSharedStem(gm);
   $("q-text").textContent = q.question;
   const fig = $("q-fig");
   const figImg = $("q-fig-img");
@@ -488,10 +687,17 @@ function renderQuestion() {
     return;
   }
 
+  const obscured = obscurityNote(q);
+  if (obscured) {
+    const note = document.createElement("p");
+    note.className = "stem-flag";
+    note.textContent = obscured;
+    box.appendChild(note);
+  }
   (q.options || []).forEach((opt, i) => {
     const b = document.createElement("button");
     b.type = "button";
-    b.className = "opt";
+    b.className = "opt" + (optionIsObscured(opt) ? " flagged" : "");
     b.textContent = opt;
     const letter = optionLetter(opt) || "ABCDE"[i];
     b.dataset.letter = letter;
@@ -564,7 +770,11 @@ function applyScore(ok, q) {
   $("hud-streak").textContent = state.streak;
   $("hud-combo").textContent = "×" + state.combo;
   $("btn-next").style.display = "block";
-  $("btn-next").textContent = state.idx + 1 >= state.order.length ? "看結果" : "下一題 →";
+  const curG = groupMeta(q);
+  const nxt = state.order[state.idx + 1];
+  const nxtG = nxt ? groupMeta(nxt) : null;
+  const moreInGroup = !!(curG.groupId && nxtG && nxtG.groupId === curG.groupId);
+  $("btn-next").textContent = state.idx + 1 >= state.order.length ? "看結果" : (moreInGroup ? "題組下一題 →" : "下一題 →");
   const submitBtn = $("btn-submit-multi");
   if (submitBtn) submitBtn.style.display = "none";
 }
@@ -691,9 +901,11 @@ if (figBox) figBox.onclick = () => {
 };
 if (lb) lb.onclick = () => { lb.classList.remove("show"); lbImg.removeAttribute("src"); };
 
+bindQuestionGroups(QUESTIONS);
 renderSubjects();
 refreshChapters();
 updatePoolInfo();
+window.__quiz = { state, QUESTIONS, QUESTION_GROUPS, packUnits, expandUnits, filteredPool, renderQuestion, groupMeta, startGame };
 
 </script>
 <script>
