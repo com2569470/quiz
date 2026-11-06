@@ -73,6 +73,7 @@ select, input[type=number] {
   transition: width .25s ease; }
 .qmeta { color: var(--muted); font-size: .82rem; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 2px 8px; }
+.tag.year114 { border-color: var(--accent2); color: #fde68a; font-weight: 700; }
 .qtext { font-size: 1.12rem; line-height: 1.55; margin: 0 0 14px; white-space: pre-wrap; word-break: break-word; }
 .opt {
   width: 100%; text-align: left; min-height: 58px; margin: 0 0 10px; padding: 14px 14px;
@@ -344,8 +345,27 @@ function addWrong(q) {
     exam_date: q.exam_date || EXAM_DATES[q.subject] || ""
   };
   if (q.image) row.image = q.image;
+  const y114 = year114Mark(q);
+  if (y114) row.also_in_114 = y114;
   list.push(row);
   saveWrong(list);
+}
+function isScoredQuestion(q) {
+  if (!q) return false;
+  const status = q.review_status || q.status;
+  if (q.pending === true) return false;
+  if (status === "pending" || status === "incomplete") return false;
+  return true;
+}
+function year114Mark(q) {
+  const mark = q && q.also_in_114;
+  if (!mark || mark.confirmed !== true) return null;
+  if (mark.evidence_class !== "confirmed_114_exam") return null;
+  return {
+    confirmed: true,
+    evidence_class: "confirmed_114_exam",
+    source_label: typeof mark.source_label === "string" ? mark.source_label : ""
+  };
 }
 function removeWrong(q) {
   saveWrong(loadWrong().filter(x => qKey(x) !== qKey(q)));
@@ -469,6 +489,7 @@ function packUnits(filtered) {
     const members = g._qs || [];
     if (!members.length || !members.some(q => selected.has(qKey(q)))) continue;
     members.forEach(q => groupedKeys.add(qKey(q)));
+    if (members.some(q => !isScoredQuestion(q))) continue;
     units.push(members.slice());
   }
   for (const q of filtered) {
@@ -533,6 +554,7 @@ function renderSharedStem(gm) {
 function subjectsInBank() {
   const map = new Map();
   for (const q of QUESTIONS) {
+    if (!isScoredQuestion(q)) continue;
     map.set(q.subject, (map.get(q.subject) || 0) + 1);
   }
   return [...map.entries()].sort((a,b) => {
@@ -571,6 +593,7 @@ function renderSubjects() {
 function refreshChapters() {
   const chapters = new Set();
   for (const q of QUESTIONS) {
+    if (!isScoredQuestion(q)) continue;
     if (state.selectedSubjects.has(q.subject)) chapters.add(q.chapter || "未分章");
   }
   const list = [...chapters].sort((a,b)=>a.localeCompare(b,"zh-Hant"));
@@ -599,6 +622,7 @@ function filteredPool(base) {
   const srcOk = state.sourceTypes;
   const chapFilter = state.chapters; // empty = all
   return base.filter(q => {
+    if (!isScoredQuestion(q)) return false;
     if (!state.selectedSubjects.has(q.subject)) return false;
     if (!srcOk.has(q.source_type || "其他")) return false;
     if (chapFilter.size && !chapFilter.has(q.chapter || "未分章")) return false;
@@ -723,7 +747,8 @@ function renderQuestion() {
     groupTag,
     `<span class="tag">第 ${state.idx+1} / ${total} 題</span>`,
     state.mode === "review" ? `<span class="tag">錯題本</span>` : "",
-    state.limitNote ? `<span class="tag">${escapeHtml(state.limitNote)}</span>` : ""
+    state.limitNote ? `<span class="tag">${escapeHtml(state.limitNote)}</span>` : "",
+    year114Mark(q) ? `<span class="tag year114" title="${escapeAttr(year114Mark(q).source_label || "")}">114年也有出</span>` : ""
   ].join("");
   renderSharedStem(gm);
   $("q-text").textContent = q.question;
