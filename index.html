@@ -74,6 +74,9 @@ select, input[type=number] {
 .qmeta { color: var(--muted); font-size: .82rem; margin-bottom: 8px; display: flex; flex-wrap: wrap; gap: 6px; }
 .tag { background: #0f172a; border: 1px solid var(--border); border-radius: 8px; padding: 2px 8px; }
 .tag.year114 { border-color: var(--accent2); color: #fde68a; font-weight: 700; }
+.year-row { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
+.year-row[hidden] { display: none !important; }
+#arch-year-chips .chip { flex: 1 1 46%; justify-content: center; font-weight: 700; }
 .tag.warn { border-color: var(--bad); color: #fecaca; font-weight: 700; }
 .qtext { font-size: 1.12rem; line-height: 1.55; margin: 0 0 14px; white-space: pre-wrap; word-break: break-word; }
 .opt {
@@ -194,6 +197,15 @@ select, input[type=number] {
       <button type="button" class="chip on" data-src="老師重點提示模擬題">老師重點提示模擬題</button>
       <button type="button" class="chip on" data-src="其他">其他</button>
     </div>
+    <div id="arch-year-row" class="year-row">
+      <p class="footer-note">考古題年份。只篩考古；國考和其他來源不受這排影響。113 與 114 都有的題，兩個年份都會看到，全部年份只出一次。</p>
+      <div id="arch-year-chips" class="row">
+        <button type="button" class="chip on" data-year="all">全部年份</button>
+        <button type="button" class="chip" data-year="114">114 年</button>
+        <button type="button" class="chip" data-year="113">113 年</button>
+        <button type="button" class="chip" data-year="other">其他年份</button>
+      </div>
+    </div>
     <label class="field">章節（可多選；不選＝全部）</label>
     <div id="chapter-list" class="chapter-list"></div>
   </div>
@@ -312,6 +324,8 @@ const $ = (id) => document.getElementById(id);
 const state = {
   selectedSubjects: new Set(),
   sourceTypes: new Set(["考古","國考","自編","老師重點提示模擬題","其他"]),
+  archYearAll: true,
+  archYears: new Set(),
   chapters: new Set(),
   pool: [],
   order: [],
@@ -626,6 +640,35 @@ function escapeHtml(s) {
 }
 function escapeAttr(s) { return escapeHtml(s); }
 
+function sourceLooksNational(src) {
+  return /藥師|國考|考選部|專技高考|一階/.test(String(src || ""));
+}
+function schoolArchYears(q) {
+  const years = new Set();
+  if ((q.source_type || "") !== "考古") return years;
+  const src = String(q.source || "");
+  if (!sourceLooksNational(src)) {
+    if (/113\s*期中/.test(src)) years.add("113");
+    if (/114\s*[-－]?\s*\d*\s*期中/.test(src)) years.add("114");
+  }
+  const mark = q.also_in_114;
+  const label = mark && mark.source_label ? String(mark.source_label) : "";
+  if (mark && mark.confirmed === true && mark.evidence_class === "confirmed_114_exam"
+      && /114/.test(label) && /期中/.test(label) && !sourceLooksNational(label)) {
+    years.add("114");
+  }
+  return years;
+}
+function archYearMatch(q) {
+  if ((q.source_type || "其他") !== "考古") return true;
+  if (!state.sourceTypes.has("考古")) return true;
+  if (state.archYearAll) return true;
+  const years = schoolArchYears(q);
+  const want = state.archYears;
+  if (!want.size) return false;
+  const inOther = !years.has("113") && !years.has("114");
+  return (want.has("113") && years.has("113")) || (want.has("114") && years.has("114")) || (want.has("other") && inOther);
+}
 function filteredPool(base) {
   const srcOk = state.sourceTypes;
   const chapFilter = state.chapters; // empty = all
@@ -634,7 +677,20 @@ function filteredPool(base) {
     if (!state.selectedSubjects.has(q.subject)) return false;
     if (!srcOk.has(q.source_type || "其他")) return false;
     if (chapFilter.size && !chapFilter.has(q.chapter || "未分章")) return false;
+    if (!archYearMatch(q)) return false;
     return true;
+  });
+}
+function syncArchYearRow() {
+  const row = $("arch-year-row");
+  if (!row) return;
+  const show = state.sourceTypes.has("考古");
+  row.hidden = !show;
+  document.querySelectorAll("#arch-year-chips .chip").forEach(btn => {
+    const y = btn.dataset.year;
+    const on = y === "all" ? state.archYearAll : (!state.archYearAll && state.archYears.has(y));
+    btn.classList.toggle("on", on);
+    btn.setAttribute("aria-pressed", String(on));
   });
 }
 
@@ -643,7 +699,10 @@ function updatePoolInfo() {
   const n = pool.length;
   const w = loadWrong().length;
   const groups = packUnits(pool).filter(u => u.length > 1).length;
-  $("pool-info").textContent = `可出題：${n}　｜　題組：${groups}　｜　錯題本：${w} 題`;
+  const yearEmpty = state.sourceTypes.has("考古") && !state.archYearAll && n === 0;
+  $("pool-info").textContent = yearEmpty
+    ? `可出題：0　｜　這個年份沒有可計分考古題，不會自動改回全部　｜　錯題本：${w} 題`
+    : `可出題：${n}　｜　題組：${groups}　｜　錯題本：${w} 題`;
   $("btn-start").disabled = n === 0;
   $("btn-review").disabled = w === 0;
 }
@@ -1336,9 +1395,26 @@ document.querySelectorAll("#source-chips .chip").forEach(chip => {
     const t = chip.dataset.src;
     if (state.sourceTypes.has(t)) { state.sourceTypes.delete(t); chip.classList.remove("on"); }
     else { state.sourceTypes.add(t); chip.classList.add("on"); }
+    syncArchYearRow();
     updatePoolInfo();
   };
 });
+document.querySelectorAll("#arch-year-chips .chip").forEach(btn => {
+  btn.onclick = () => {
+    const y = btn.dataset.year;
+    if (y === "all") {
+      state.archYearAll = true;
+      state.archYears.clear();
+    } else {
+      state.archYearAll = false;
+      if (state.archYears.has(y)) state.archYears.delete(y);
+      else state.archYears.add(y);
+    }
+    syncArchYearRow();
+    updatePoolInfo();
+  };
+});
+syncArchYearRow();
 $("btn-start").onclick = () => startGame("play");
 $("btn-review").onclick = () => startGame("review");
 $("btn-next").onclick = nextQ;
@@ -1390,7 +1466,7 @@ try {
   const info = $("card-info");
   if (info) info.textContent = "字卡資料無法讀取，未放入任何替代內容。";
 }
-window.__quiz = { state, QUESTIONS, QUESTION_GROUPS, packUnits, expandUnits, filteredPool, renderQuestion, groupMeta, startGame, setFlashcards, cardState, filteredCards, FLASHCARDS: () => FLASHCARDS };
+window.__quiz = { state, QUESTIONS, QUESTION_GROUPS, packUnits, expandUnits, filteredPool, renderQuestion, groupMeta, startGame, setFlashcards, cardState, filteredCards, schoolArchYears, FLASHCARDS: () => FLASHCARDS };
 
 </script>
 <!-- Curated exam_flashcards.json is embedded here when it arrives. [] means no cards; do not put placeholder study content in this tag. Escape "<" as \u003c so the tag cannot close early. -->
