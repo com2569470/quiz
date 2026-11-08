@@ -88,6 +88,7 @@ select, input[type=number] {
 .opt.correct { border-color: var(--good); background: rgba(34,197,94,.18); }
 .opt.wrong { border-color: var(--bad); background: rgba(239,68,68,.16); }
 .opt.dim { opacity: .55; }
+.opt:disabled { opacity: 1; cursor: default; color: var(--text); }
 .opt.picked { border-color: var(--accent); background: rgba(20,184,166,.22); }
 .opt .pick-mark { float: right; color: var(--accent); font-weight: 700; }
 .feedback { margin-top: 6px; padding: 12px; border-radius: 12px; background: #0f172a; border: 1px solid var(--border); }
@@ -198,7 +199,7 @@ select, input[type=number] {
       <button type="button" class="chip on" data-src="其他">其他</button>
     </div>
     <div id="arch-year-row" class="year-row">
-      <p class="footer-note">考古題年份。只篩考古；國考和其他來源不受這排影響。113 與 114 都有的題，兩個年份都會看到，全部年份只出一次。</p>
+      <p class="footer-note">考古題年份。選 114 年時，已核對的國考重出題會按 114 卷的選項順序出現，來源仍標國考，不是 114 原卷。其他未核的國考不會混進指定年份。113 與 114 都有的題，兩個年份都會看到，全部年份只出一次。</p>
       <div id="arch-year-chips" class="row">
         <button type="button" class="chip on" data-year="all">全部年份</button>
         <button type="button" class="chip" data-year="114">114 年</button>
@@ -221,6 +222,7 @@ select, input[type=number] {
       <button class="btn secondary" id="btn-review">📕 錯題本</button>
     </div>
     <button class="btn ghost" id="btn-clear-wrong" style="margin-top:8px">清空錯題本</button>
+    <button class="btn secondary" id="btn-pending-114" type="button" style="margin-top:8px;display:none">查看待確認（不計分）</button>
     <p class="footer-note">承上題以題組出題：整組抽題、依原題號接續，每題都看得到共用題幹。</p>
     <p class="footer-note" id="pool-info">可出題：0</p>
   </div>
@@ -643,6 +645,18 @@ function escapeAttr(s) { return escapeHtml(s); }
 function sourceLooksNational(src) {
   return /藥師|國考|考選部|專技高考|一階/.test(String(src || ""));
 }
+function isConfirmedSchool114Repeat(q) {
+  const mark = q && q.also_in_114;
+  const label = mark && mark.source_label ? String(mark.source_label) : "";
+  const map = mark && mark.option_letter_map;
+  return !!(q && (q.source_type || "") !== "考古"
+    && mark && mark.confirmed === true && mark.evidence_class === "confirmed_114_exam"
+    && /114/.test(label) && /期中/.test(label) && !sourceLooksNational(label)
+    && map && typeof map === "object");
+}
+function yearFilterActive() {
+  return state.sourceTypes.has("考古") && !state.archYearAll;
+}
 function schoolArchYears(q) {
   const years = new Set();
   if ((q.source_type || "") !== "考古") return years;
@@ -660,7 +674,10 @@ function schoolArchYears(q) {
   return years;
 }
 function archYearMatch(q) {
-  if ((q.source_type || "其他") !== "考古") return true;
+  if ((q.source_type || "其他") !== "考古") {
+    if (!yearFilterActive()) return true;
+    return state.archYears.has("114") && isConfirmedSchool114Repeat(q);
+  }
   if (!state.sourceTypes.has("考古")) return true;
   if (state.archYearAll) return true;
   const years = schoolArchYears(q);
@@ -675,7 +692,9 @@ function filteredPool(base) {
   return base.filter(q => {
     if (!isScoredQuestion(q)) return false;
     if (!state.selectedSubjects.has(q.subject)) return false;
-    if (!srcOk.has(q.source_type || "其他")) return false;
+    const srcType = q.source_type || "其他";
+    const allowRepeat = yearFilterActive() && state.archYears.has("114") && isConfirmedSchool114Repeat(q);
+    if (!srcOk.has(srcType) && !allowRepeat) return false;
     if (chapFilter.size && !chapFilter.has(q.chapter || "未分章")) return false;
     if (!archYearMatch(q)) return false;
     return true;
@@ -699,12 +718,52 @@ function updatePoolInfo() {
   const n = pool.length;
   const w = loadWrong().length;
   const groups = packUnits(pool).filter(u => u.length > 1).length;
+  const pendingN = pending114List().length;
+  const showPending = yearFilterActive() && state.archYears.has("114");
   const yearEmpty = state.sourceTypes.has("考古") && !state.archYearAll && n === 0;
+  const pendingNote = showPending ? `　｜　待確認可查看：${pendingN}（不計分）` : "";
   $("pool-info").textContent = yearEmpty
-    ? `可出題：0　｜　這個年份沒有可計分考古題，不會自動改回全部　｜　錯題本：${w} 題`
-    : `可出題：${n}　｜　題組：${groups}　｜　錯題本：${w} 題`;
+    ? `可計分：0${pendingNote}　｜　這個年份沒有可計分考古題，不會自動改回全部　｜　錯題本：${w} 題`
+    : `可計分：${n}　｜　題組：${groups}${pendingNote}　｜　錯題本：${w} 題`;
   $("btn-start").disabled = n === 0;
   $("btn-review").disabled = w === 0;
+  const pendBtn = $("btn-pending-114");
+  if (pendBtn) {
+    pendBtn.style.display = showPending ? "block" : "none";
+    pendBtn.disabled = pendingN === 0;
+    pendBtn.textContent = `查看待確認 ${pendingN} 題（不計分）`;
+  }
+}
+function pending114List() {
+  if (!(yearFilterActive() && state.archYears.has("114"))) return [];
+  return QUESTIONS.filter(q => {
+    if (q.review_status !== "pending") return false;
+    if (!state.selectedSubjects.has(q.subject)) return false;
+    if (state.chapters.size && !state.chapters.has(q.chapter || "未分章")) return false;
+    return schoolArchYears(q).has("114");
+  });
+}
+function rewriteOptionLetter(opt, letter) {
+  const raw = String(opt);
+  if (/^\s*[\(（]/.test(raw)) return raw.replace(/^(\s*[\(（])[A-Ea-eＡ-Ｅ]/, `$1${letter}`);
+  return raw.replace(/^(\s*)[A-Ea-eＡ-Ｅ]([\)）．.、:：])/, `$1${letter}$2`);
+}
+function presentFor114(q) {
+  if (!q || q._view114) return q;
+  if (!isConfirmedSchool114Repeat(q) || !yearFilterActive() || !state.archYears.has("114")) return q;
+  const map = q.also_in_114.option_letter_map;
+  const options = (q.options || []).map(opt => {
+    const from = optionLetter(opt);
+    const to = from && map[from] ? map[from] : from;
+    return to ? rewriteOptionLetter(opt, to) : opt;
+  }).sort((a, b) => String(optionLetter(a) || "").localeCompare(String(optionLetter(b) || "")));
+  const answer = String(q.answer || "").replace(/[A-E]/g, ch => map[ch] || ch);
+  return Object.assign({}, q, {
+    options, answer,
+    _view114: true,
+    _bankAnswer: q.answer,
+    _bankSource: q.source
+  });
 }
 
 function showScreen(id) {
@@ -737,9 +796,25 @@ function startGame(mode) {
   let limit = parseInt($("q-limit").value, 10);
   if (!Number.isFinite(limit) || limit < 0) limit = 0;
   const built = expandUnits(packUnits(state.pool), limit);
-  state.order = built.order;
+  state.order = built.order.map(presentFor114);
   state.limitNote = built.note;
   if (!state.order.length) { alert("目前沒有符合條件的題目"); return; }
+  state.idx = 0;
+  state.score = 0;
+  state.streak = 0;
+  state.combo = 1;
+  state.correct = 0;
+  state.answered = 0;
+  showScreen("screen-quiz");
+  renderQuestion();
+}
+function startPending114() {
+  const list = pending114List();
+  if (!list.length) { alert("目前沒有可查看的待確認題"); return; }
+  state.mode = "preview";
+  state.pool = list;
+  state.order = list.slice();
+  state.limitNote = "";
   state.idx = 0;
   state.score = 0;
   state.streak = 0;
@@ -814,6 +889,8 @@ function renderQuestion() {
     groupTag,
     `<span class="tag">第 ${state.idx+1} / ${total} 題</span>`,
     state.mode === "review" ? `<span class="tag">錯題本</span>` : "",
+    state.mode === "preview" ? `<span class="tag warn">待確認、不計分</span>` : "",
+    q._view114 ? `<span class="tag year114">114重出・選項依114卷，來源仍是國考</span>` : "",
     state.limitNote ? `<span class="tag">${escapeHtml(state.limitNote)}</span>` : "",
     year114Mark(q) ? `<span class="tag year114" title="${escapeAttr(year114Mark(q).source_label || "")}">114年也有出</span>` : "",
     q.review_status === "unconfirmed" ? `<span class="tag warn">答案未確認</span>` : "",
@@ -833,6 +910,34 @@ function renderQuestion() {
   }
   const box = $("options");
   box.innerHTML = "";
+
+  if (state.mode === "preview") {
+    const note = document.createElement("p");
+    note.className = "card-flag";
+    const stored = String(q.answer || "").trim();
+    note.textContent = stored
+      ? `待確認、不計分。暫存紀錄是 ${stored}，不是已核正解。缺字與原標記照實保留，不用作答、不扣分。`
+      : "待確認、不計分。這題沒有已核正解。缺字與原標記照實保留，不用作答、不扣分。";
+    box.appendChild(note);
+    (q.options || []).forEach(opt => {
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "opt" + (optionIsObscured(opt) ? " flagged" : "");
+      b.textContent = opt;
+      b.disabled = true;
+      box.appendChild(b);
+    });
+    if (q.explanation) {
+      const p = document.createElement("p");
+      p.className = "stem-flag";
+      p.textContent = "暫存說明（未核）：" + q.explanation;
+      box.appendChild(p);
+    }
+    $("btn-next").style.display = "block";
+    $("btn-next").textContent = state.idx + 1 >= total ? "回主畫面" : "下一題 →";
+    $("hud-timer").textContent = "不計分";
+    return;
+  }
 
   if (qtype === "fill") {
     const hint = document.createElement("p");
@@ -929,7 +1034,9 @@ function showFeedback(ok, title, q) {
   }
   if (q.evidence_note) html += `<p>${escapeHtml(q.evidence_note)}</p>`;
   const y114 = year114Mark(q);
-  if (y114 && y114.option_letter_map) {
+  if (q._view114) {
+    html += `<p>收錄來源仍是${escapeHtml(q.source_type)}／${escapeHtml(q._bankSource || q.source)}，不是114原卷。畫面選項已按114卷順序排列，這一輪的正解字母是114卷的 ${escapeHtml(q.answer)}。原題答案字母是 ${escapeHtml(q._bankAnswer)}。詳解裡的字母沿用原國考題。</p>`;
+  } else if (y114 && y114.option_letter_map) {
     const pairs = Object.keys(y114.option_letter_map).sort().map(k => `${k}→${y114.option_letter_map[k]}`).join("、");
     html += `<p><b>114卷選項對照：</b>原題字母對到114卷 ${escapeHtml(pairs)}。本題選項與答案字母維持原題。</p>`;
   }
@@ -1031,6 +1138,7 @@ function gradeFill() {
 }
 
 function grade(chosen) {
+  if (state.mode === "preview") return;
   // timeout / generic
   const q = state.order[state.idx];
   const qtype = qTypeOf(q);
@@ -1048,6 +1156,7 @@ function grade(chosen) {
 
 function nextQ() {
   if (state.idx + 1 >= state.order.length) {
+    if (state.mode === "preview") { showScreen("screen-home"); updatePoolInfo(); return; }
     finish();
     return;
   }
@@ -1057,6 +1166,7 @@ function nextQ() {
 
 function finish() {
   stopTimer();
+  if (state.mode === "preview") { showScreen("screen-home"); updatePoolInfo(); return; }
   showScreen("screen-result");
   const acc = state.answered ? Math.round(state.correct / state.answered * 100) : 0;
   $("res-score").textContent = state.score + " 分";
@@ -1416,6 +1526,7 @@ document.querySelectorAll("#arch-year-chips .chip").forEach(btn => {
 });
 syncArchYearRow();
 $("btn-start").onclick = () => startGame("play");
+$("btn-pending-114").onclick = () => startPending114();
 $("btn-review").onclick = () => startGame("review");
 $("btn-next").onclick = nextQ;
 $("btn-quit").onclick = finish;
@@ -1466,7 +1577,7 @@ try {
   const info = $("card-info");
   if (info) info.textContent = "字卡資料無法讀取，未放入任何替代內容。";
 }
-window.__quiz = { state, QUESTIONS, QUESTION_GROUPS, packUnits, expandUnits, filteredPool, renderQuestion, groupMeta, startGame, setFlashcards, cardState, filteredCards, schoolArchYears, FLASHCARDS: () => FLASHCARDS };
+window.__quiz = { state, QUESTIONS, QUESTION_GROUPS, packUnits, expandUnits, filteredPool, renderQuestion, groupMeta, startGame, startPending114, setFlashcards, cardState, filteredCards, schoolArchYears, isConfirmedSchool114Repeat, FLASHCARDS: () => FLASHCARDS };
 
 </script>
 <!-- Curated exam_flashcards.json is embedded here when it arrives. [] means no cards; do not put placeholder study content in this tag. Escape "<" as \u003c so the tag cannot close early. -->
