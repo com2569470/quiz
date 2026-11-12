@@ -76,6 +76,7 @@ select, input[type=number] {
 .tag.year114 { border-color: var(--accent2); color: #fde68a; font-weight: 700; }
 .year-row { margin-top: 10px; padding-top: 8px; border-top: 1px dashed var(--border); }
 .year-row[hidden] { display: none !important; }
+.chip[hidden] { display: none !important; }
 #arch-year-chips .chip { flex: 1 1 46%; justify-content: center; font-weight: 700; }
 .tag.warn { border-color: var(--bad); color: #fecaca; font-weight: 700; }
 .qtext { font-size: 1.12rem; line-height: 1.55; margin: 0 0 14px; white-space: pre-wrap; word-break: break-word; }
@@ -333,13 +334,14 @@ select, input[type=number] {
 </section>
 
 <script type="text/plain" id="app-src">
+const SHOW_PAST_EXAMS = false;
 const EXAM_DATES = {"藥物分析":"11/9","藥分":"11/9","生藥學":"11/10","生藥":"11/10","藥劑學(二)":"11/10","藥劑(二)":"11/10","藥科實驗":"11/10","藥學科學實驗":"11/10","藥化":"11/11","藥物化學":"11/11","藥劑實驗":"11/11","藥劑學實驗":"11/11","藥理學":"11/12","藥理":"11/12","臨檢":"11/13","臨床檢驗學":"11/13"};
 const LS_WRONG = "cnu_midterm_wrong_v1";
 
 const $ = (id) => document.getElementById(id);
 const state = {
   selectedSubjects: new Set(),
-  sourceTypes: new Set(["考古","國考","自編","老師重點提示模擬題","其他"]),
+  sourceTypes: new Set(["國考","自編","老師重點提示模擬題","其他"].concat(SHOW_PAST_EXAMS ? ["考古"] : [])),
   archYearAll: true,
   archYears: new Set(),
   chapters: new Set(),
@@ -722,10 +724,27 @@ function renderSharedStem(gm) {
   el.style.display = "block";
 }
 
+function isHiddenPastExam(q) {
+  return !SHOW_PAST_EXAMS && !!q && (q.source_type || "") === "考古";
+}
+function applyPastExamVisibility() {
+  const chip = document.querySelector('#source-chips .chip[data-src="考古"]');
+  if (chip) {
+    chip.hidden = !SHOW_PAST_EXAMS;
+    if (!SHOW_PAST_EXAMS) chip.classList.remove("on");
+  }
+  if (!SHOW_PAST_EXAMS) {
+    state.sourceTypes.delete("考古");
+    const row = $("arch-year-row");
+    if (row) row.hidden = true;
+    const pend = $("btn-pending-114");
+    if (pend) pend.style.display = "none";
+  }
+}
 function subjectsInBank() {
   const map = new Map();
   for (const q of QUESTIONS) {
-    if (!isScoredQuestion(q)) continue;
+    if (!isScoredQuestion(q) || isHiddenPastExam(q)) continue;
     map.set(q.subject, (map.get(q.subject) || 0) + 1);
   }
   return [...map.entries()].sort((a,b) => {
@@ -764,7 +783,7 @@ function renderSubjects() {
 function refreshChapters() {
   const chapters = new Set();
   for (const q of QUESTIONS) {
-    if (!isScoredQuestion(q)) continue;
+    if (!isScoredQuestion(q) || isHiddenPastExam(q)) continue;
     if (state.selectedSubjects.has(q.subject)) chapters.add(q.chapter || "未分章");
   }
   const list = [...chapters].sort((a,b)=>a.localeCompare(b,"zh-Hant"));
@@ -837,7 +856,7 @@ function filteredPool(base) {
   const srcOk = state.sourceTypes;
   const chapFilter = state.chapters; // empty = all
   return base.filter(q => {
-    if (!isScoredQuestion(q)) return false;
+    if (!isScoredQuestion(q) || isHiddenPastExam(q)) return false;
     if (!state.selectedSubjects.has(q.subject)) return false;
     const srcType = q.source_type || "其他";
     const allowRepeat = yearFilterActive() && state.archYears.has("114") && isConfirmedSchool114Repeat(q);
@@ -848,9 +867,10 @@ function filteredPool(base) {
   });
 }
 function syncArchYearRow() {
+  applyPastExamVisibility();
   const row = $("arch-year-row");
   if (!row) return;
-  const show = state.sourceTypes.has("考古");
+  const show = SHOW_PAST_EXAMS && state.sourceTypes.has("考古");
   row.hidden = !show;
   document.querySelectorAll("#arch-year-chips .chip").forEach(btn => {
     const y = btn.dataset.year;
@@ -863,7 +883,7 @@ function syncArchYearRow() {
 function updatePoolInfo() {
   const pool = filteredPool(QUESTIONS);
   const n = pool.length;
-  const w = loadWrong().length;
+  const w = loadWrong().filter(q => !isHiddenPastExam(q)).length;
   const groups = packUnits(pool).filter(u => u.length > 1).length;
   const pendingN = pending114List().length;
   const showPending = yearFilterActive() && state.archYears.has("114");
@@ -910,6 +930,7 @@ function updateLiuInfo() {
   }
 }
 function pending114List() {
+  if (!SHOW_PAST_EXAMS) return [];
   if (!(yearFilterActive() && state.archYears.has("114"))) return [];
   return QUESTIONS.filter(q => {
     if (q.review_status !== "pending") return false;
@@ -962,7 +983,7 @@ function startGame(mode) {
   if (mode === "review") {
     // in review, ignore subject filter if empty intersection — use all wrong
     let pool = filteredPool(base);
-    if (!pool.length) pool = base.slice();
+    if (!pool.length) pool = base.filter(q => !isHiddenPastExam(q));
     state.pool = pool;
   } else {
     state.pool = filteredPool(base);
