@@ -186,9 +186,9 @@ select, input[type=number] {
 <section id="screen-home" class="screen active">
   <h1>💊 期中考刷題速遊戲</h1>
   <p class="sub">離線單檔・大按鈕・適合平板／手機通勤刷題</p>
-  <div class="mode-switch" role="tablist" aria-label="功能切換">
+  <div class="mode-switch" role="tablist" aria-label="功能切換" style="display:none">
     <button type="button" class="chip on" id="mode-quiz" role="tab" aria-selected="true">📝 刷題</button>
-    <button type="button" class="chip" id="mode-cards" role="tab" aria-selected="false">🗂️ 考試必背字卡</button>
+    <button type="button" class="chip" id="mode-cards" role="tab" aria-selected="false" hidden style="display:none">🗂️ 考試必背字卡</button>
   </div>
 
   <div id="quiz-setup">
@@ -214,15 +214,15 @@ select, input[type=number] {
   </div>
 
   <div class="card">
-    <h2>題源篩選</h2>
-    <div id="source-chips" class="row">
+    <h2>章節</h2>
+    <div id="source-chips" class="row" style="display:none">
       <button type="button" class="chip on" data-src="考古">考古</button>
       <button type="button" class="chip on" data-src="國考">國考</button>
       <button type="button" class="chip on" data-src="自編">自編</button>
       <button type="button" class="chip on" data-src="老師重點提示模擬題">老師重點提示模擬題</button>
       <button type="button" class="chip on" data-src="其他">其他</button>
     </div>
-    <div id="arch-year-row" class="year-row">
+    <div id="arch-year-row" class="year-row" style="display:none">
       <p class="footer-note">考古題年份。選 114 年時，已核對的國考重出題會按 114 卷的選項順序出現，來源仍標國考，不是 114 原卷。其他未核的國考不會混進指定年份。113 與 114 都有的題，兩個年份都會看到，全部年份只出一次。</p>
       <div id="arch-year-chips" class="row">
         <button type="button" class="chip on" data-year="all">全部年份</button>
@@ -751,10 +751,12 @@ function applyPastExamVisibility() {
     if (pend) pend.style.display = "none";
   }
 }
+const VISIBLE_SUBJECTS = new Set(["藥分小考題庫（楊老師）", "藥分期末國考（楊老師範圍）"]);
 function subjectsInBank() {
   const map = new Map();
   for (const q of QUESTIONS) {
     if (!isScoredQuestion(q) || isHiddenPastExam(q)) continue;
+    if (!VISIBLE_SUBJECTS.has(q.subject)) continue;
     map.set(q.subject, (map.get(q.subject) || 0) + 1);
   }
   return [...map.entries()].sort((a,b) => {
