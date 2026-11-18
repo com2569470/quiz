@@ -2411,7 +2411,6 @@ function renderGameHome() {
     <div class="card"><h2>🚃 3分鐘通勤任務</h2><p class="footer-note" style="text-align:left">5 題快問快答，優先出你在遊戲裡答錯過的題目（錯題 ${g.wrong.length} 題）。</p><button type="button" class="btn" id="g-commute">開始通勤任務</button></div>
     <div class="card"><h2>🏰 藥分城</h2>
       <div class="g-zone"><h3>🗼 楊老師塔</h3>${floors}${locked}</div>
-      <div class="g-zone"><h3>🏛️ 唐老師殿</h3><div class="g-floor locked"><b>唐自強老師範圍</b><span class="g-st">🔒 待期末範圍公告</span></div></div>
       <div class="g-team">${gameImg("aquaman")}${gameImg("lilli")}${gameImg("tiana")}<p>長老 Aquaman 給提示・長老 Lilli 頒徽章・Tiana 每層各給一次技能</p></div>
     </div>`;
   box.querySelectorAll(".g-floor[data-floor]").forEach(b => b.onclick = () => gameOpenFloor(Number(b.dataset.floor)));
