@@ -339,6 +339,9 @@ body:not(.ap-locked) #ap-gate { display: none; }
 #ap-gate .ap-bar { height: 8px; background: #0f172a; border-radius: 999px; overflow: hidden; margin: 12px 0 0; }
 #ap-gate .ap-bar > i { display: block; height: 100%; width: 0; background: linear-gradient(90deg, #14b8a6, #f59e0b); transition: width .2s; }
 #ap-gate [hidden] { display: none !important; }
+#ap-gate .ap-iab-help { margin: 0 0 14px; text-align: left; background: #1b2a44; border: 1px solid #f59e0b; border-radius: 14px; padding: 14px 14px 12px; }
+#ap-gate .ap-iab-title { color: #fde68a; font-size: 1.05rem; font-weight: 700; line-height: 1.45; margin: 0 0 8px; text-align: center; }
+#ap-gate .ap-iab-steps { color: #e2e8f0; font-size: .9rem; line-height: 1.6; margin: 0; }
 @keyframes apspin { to { transform: rotate(360deg); } }
 #ap-userbar { display: flex; align-items: center; gap: 8px; margin: 0 0 6px; padding: 6px 8px; background: #152033;
   border: 1px solid #334155; border-radius: 999px; font-size: .8rem; color: #94a3b8; }
@@ -361,7 +364,12 @@ body:not(.ap-locked) #ap-gate { display: none; }
       <svg viewBox="0 0 48 48" aria-hidden="true"><path fill="#FFC107" d="M43.6 20.5H42V20H24v8h11.3C33.7 32.7 29.2 36 24 36c-6.6 0-12-5.4-12-12s5.4-12 12-12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 12.9 4 4 12.9 4 24s8.9 20 20 20 20-8.9 20-20c0-1.3-.1-2.4-.4-3.5z"/><path fill="#FF3D00" d="M6.3 14.7l6.6 4.8C14.7 15.1 19 12 24 12c3.1 0 5.8 1.2 7.9 3.1l5.7-5.7C34 6.1 29.3 4 24 4 16.3 4 9.7 8.3 6.3 14.7z"/><path fill="#4CAF50" d="M24 44c5.2 0 9.9-2 13.4-5.2l-6.2-5.2C29.2 35.1 26.7 36 24 36c-5.2 0-9.6-3.3-11.3-7.9l-6.5 5C9.5 39.6 16.2 44 24 44z"/><path fill="#1976D2" d="M43.6 20.5H42V20H24v8h11.3c-.8 2.2-2.2 4.2-4.1 5.6l6.2 5.2C37 39.2 44 34 44 24c0-1.3-.1-2.4-.4-3.5z"/></svg>
       <span>用學校信箱登入（@gm.cnu.edu.tw）</span>
     </button>
+    <div id="ap-iab-help" class="ap-iab-help" hidden>
+      <p class="ap-iab-title">請改用 Safari 或 Chrome 開啟才能登入</p>
+      <p class="ap-iab-steps">LINE、Facebook、Instagram 或微信的內建瀏覽器不能用 Google 登入。<br>請點右下角「三個點」選單或分享鍵 → 用 Safari／預設瀏覽器開啟。</p>
+    </div>
     <a id="ap-external" class="ap-btn ap-secondary" hidden href="#">用 Safari / Chrome 開啟</a>
+    <button type="button" id="ap-copy" class="ap-btn ap-secondary" hidden>複製網址</button>
     <button type="button" id="ap-retry" class="ap-btn ap-secondary" hidden>重新載入</button>
     <button type="button" id="ap-switch" class="ap-btn ap-secondary" hidden>換一個帳號</button>
     <div id="ap-bar" class="ap-bar" hidden><i id="ap-bar-i"></i></div>
@@ -879,20 +887,51 @@ async function doLogout() {
 function inAppBrowser() {
   const ua = navigator.userAgent || "";
   if (/\bLine\//i.test(ua)) return "LINE";
-  if (/FBAN|FBAV|FB_IAB|Instagram|Messenger/i.test(ua)) return "Facebook / Instagram";
+  if (/FBAN|FBAV|FB_IAB|FBIOS|FBSS/i.test(ua)) return "Facebook";
+  if (/Instagram/i.test(ua)) return "Instagram";
+  if (/MicroMessenger/i.test(ua)) return "微信";
+  if (/Messenger/i.test(ua)) return "Messenger";
   return "";
+}
+function withOpenExternal(href) {
+  const u = new URL(href);
+  u.searchParams.set("openExternalBrowser", "1");
+  return u.toString();   // URL() keeps the hash after the query, e.g. ?openExternalBrowser=1#docs
+}
+function maybeRedirectLine() {
+  if (inAppBrowser() !== "LINE") return false;
+  const u = new URL(location.href);
+  if (u.searchParams.get("openExternalBrowser") === "1") return false;
+  try {
+    if (sessionStorage.getItem("ap_line_ext_redir") === "1") return false;
+    sessionStorage.setItem("ap_line_ext_redir", "1");
+  } catch (e) {}
+  location.replace(withOpenExternal(location.href));
+  return true;
+}
+function showIabGate(extra) {
+  ui.spin(false); ui.bar(null);
+  ui.show("ap-login", false);
+  ui.show("ap-retry", false);
+  ui.show("ap-switch", false);
+  const a = $g("ap-external");
+  if (a) { a.href = withOpenExternal(location.href); a.hidden = false; }
+  ui.show("ap-copy", true);
+  ui.show("ap-iab-help", true);
+  if (extra) ui.msg(extra, true);
+  else ui.msg("", false);
 }
 function showLogin(message, isErr) {
   ui.spin(false); ui.bar(null); ui.show("ap-retry", false); ui.show("ap-switch", false);
-  const iab = inAppBrowser();
-  if (iab) {
-    const u = new URL(location.href); u.searchParams.set("openExternalBrowser", "1");
-    const a = $g("ap-external"); a.href = u.toString(); a.hidden = false;
-    ui.msg((message ? message + "\n" : "") + iab + " 內建瀏覽器不能用 Google 登入。請按下面按鈕，或點右上角選單改用 Safari / Chrome 開啟。", true);
-  } else ui.msg(message || "", !!isErr);
+  if (inAppBrowser()) { showIabGate(message); return; }
+  ui.show("ap-external", false);
+  ui.show("ap-copy", false);
+  ui.show("ap-iab-help", false);
+  ui.msg(message || "", !!isErr);
   ui.show("ap-login", true);
 }
 async function doLogin() {
+  if (inAppBrowser()) { showIabGate(""); return; }
   if (busy) return; busy = true; $g("ap-login").disabled = true; ui.msg("開啟 Google 登入視窗…");
   try {
     await signInWithPopup(auth, provider);
@@ -900,7 +939,7 @@ async function doLogin() {
     const code = (e && e.code) || "";
     if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment" || code === "auth/web-storage-unsupported") {
       ui.msg("改用整頁跳轉登入…");
-      try { await signInWithRedirect(auth, provider); return; } catch (e2) { showLogin("登入失敗：" + ((e2 && e2.code) || e2), true); }
+      try { await signInWithRedirect(auth, provider); return; } catch (e2) { showLogin("登入失敗：" + ((e2 && e2.code) || e2.message || e2), true); }
     } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
       showLogin("登入視窗已關閉，再按一次就好。");
     } else if (code === "auth/unauthorized-domain") {
@@ -908,7 +947,7 @@ async function doLogin() {
     } else {
       showLogin("登入失敗：" + (code || (e && e.message) || e), true);
     }
-  } finally { busy = false; $g("ap-login").disabled = false; }
+  } finally { busy = false; if ($g("ap-login")) $g("ap-login").disabled = false; }
 }
 async function rejectAccount(user) {
   const em = (user && user.email) || "這個帳號";
@@ -921,7 +960,7 @@ async function onUser(user) {
   if (loading) return;
   if (!user) { showLogin(""); return; }
   if (!isSchoolEmail(user.email) || !user.emailVerified) { await rejectAccount(user); return; }
-  ui.show("ap-login", false); ui.show("ap-external", false); ui.spin(true);
+  ui.show("ap-login", false); ui.show("ap-external", false); ui.show("ap-copy", false); ui.show("ap-iab-help", false); ui.spin(true);
   loading = true;
   try {
     const content = await loadContent(user);
@@ -947,6 +986,27 @@ async function onUser(user) {
 $g("ap-login").addEventListener("click", doLogin);
 $g("ap-retry").addEventListener("click", () => location.reload());
 $g("ap-switch").addEventListener("click", async () => { try { await signOut(auth); } catch (e) {} location.reload(); });
+$g("ap-copy").addEventListener("click", async () => {
+  const url = withOpenExternal(location.href);
+  const ok = "已複製網址，請貼到 Safari 或 Chrome 開啟。";
+  try {
+    await navigator.clipboard.writeText(url);
+    ui.msg(ok);
+  } catch (e) {
+    const ta = document.createElement("textarea");
+    ta.value = url; ta.setAttribute("readonly", ""); ta.style.position = "fixed"; ta.style.left = "-9999px";
+    document.body.appendChild(ta); ta.select();
+    try { document.execCommand("copy"); ui.msg(ok); }
+    catch (e2) { ui.msg("請手動複製這個網址：\n" + url, true); }
+    ta.remove();
+  }
+});
+
+// Show the in-app-browser hint immediately (don't wait on Auth), and try LINE's external-browser param once.
+const leavingLine = maybeRedirectLine();
+if (leavingLine || inAppBrowser()) showIabGate("");
+
+
 setPersistence(auth, browserLocalPersistence).catch(() => {});
 getRedirectResult(auth).catch((e) => { if (e && e.code) showLogin("登入失敗：" + e.code, true); });
 onAuthStateChanged(auth, (u) => { onUser(u); });
