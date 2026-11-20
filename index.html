@@ -891,12 +891,40 @@ function inAppBrowser() {
   if (/Instagram/i.test(ua)) return "Instagram";
   if (/MicroMessenger/i.test(ua)) return "微信";
   if (/Messenger/i.test(ua)) return "Messenger";
+  if (/KAKAOTALK|musical_ly|BytedanceWebview|Threads|Barcelona/i.test(ua)) return "App";
+  // iOS WKWebView inside another app: no "Safari/" token (home-screen web app excluded)
+  if (/iPhone|iPad|iPod/i.test(ua) && !/Safari\//i.test(ua) && !navigator.standalone) return "App";
+  // Android System WebView
+  if (/Android/i.test(ua) && /; wv\)/i.test(ua)) return "App";
   return "";
 }
+const isIOS = () => /iPhone|iPad|iPod/i.test(navigator.userAgent || "") || (navigator.platform === "MacIntel" && navigator.maxTouchPoints > 1);
+const isSafari = () => /Safari\//.test(navigator.userAgent || "") && !/Chrome|Chromium|CriOS|FxiOS|EdgiOS|Android/i.test(navigator.userAgent || "");
+// 整頁跳轉登入（signInWithRedirect）在 iPhone／Safari 會因為跨網域儲存被隔離而失敗（missing initial state），只在其他瀏覽器、彈出視窗連續被擋時才用。
+const redirectSafe = () => !isIOS() && !isSafari() && !inAppBrowser();
 function withOpenExternal(href) {
   const u = new URL(href);
   u.searchParams.set("openExternalBrowser", "1");
-  return u.toString();   // URL() keeps the hash after the query, e.g. ?openExternalBrowser=1#docs
+  // 備份 #room= / #challenge= / #docs，萬一外部瀏覽器沒帶到 hash 也能還原
+  const h = (u.hash || "").replace(/^#/, "");
+  if (h && h.length <= 80) u.searchParams.set("ap_h", h); else u.searchParams.delete("ap_h");
+  return u.toString();   // URL() keeps the hash after the query, e.g. ?openExternalBrowser=1&ap_h=docs#docs
+}
+function androidChromeIntent(href) {
+  const u = new URL(href);
+  return "intent://" + u.host + u.pathname + u.search + u.hash + "#Intent;scheme=https;package=com.android.chrome;S.browser_fallback_url=" + encodeURIComponent(href) + ";end";
+}
+// 還原連結裡的目的地：?ap_h=room%3DABCDE、?room=ABCDE、?challenge=ID → #room=… 等（登入前就處理，登入後 app 依 hash 直接開房間／挑戰）
+function restoreHash() {
+  try {
+    const u = new URL(location.href);
+    if (u.hash && u.hash.length > 1) return;
+    let h = u.searchParams.get("ap_h") || "";
+    if (!h && /^[A-Za-z0-9]{5}$/.test(u.searchParams.get("room") || "")) h = "room=" + u.searchParams.get("room");
+    if (!h && /^[A-Za-z0-9]{10}$/.test(u.searchParams.get("challenge") || "")) h = "challenge=" + u.searchParams.get("challenge");
+    if (!h || !/^(docs|doc=[\w-]{1,60}|room=[A-Za-z0-9]{5}|challenge=[A-Za-z0-9]{10})$/.test(h)) return;
+    history.replaceState(null, "", u.pathname + u.search + "#" + h);
+  } catch (e) {}
 }
 function maybeRedirectLine() {
   if (inAppBrowser() !== "LINE") return false;
@@ -915,7 +943,12 @@ function showIabGate(extra) {
   ui.show("ap-retry", false);
   ui.show("ap-switch", false);
   const a = $g("ap-external");
-  if (a) { a.href = withOpenExternal(location.href); a.hidden = false; }
+  if (a) {
+    const android = /Android/i.test(navigator.userAgent || "");
+    a.href = android ? androidChromeIntent(withOpenExternal(location.href)) : withOpenExternal(location.href);
+    a.textContent = android ? "用 Chrome 開啟" : "用 Safari 開啟";
+    a.hidden = false;
+  }
   ui.show("ap-copy", true);
   ui.show("ap-iab-help", true);
   if (extra) ui.msg(extra, true);
@@ -930,24 +963,45 @@ function showLogin(message, isErr) {
   ui.msg(message || "", !!isErr);
   ui.show("ap-login", true);
 }
+let popupBlocks = 0;
 async function doLogin() {
   if (inAppBrowser()) { showIabGate(""); return; }
   if (busy) return; busy = true; $g("ap-login").disabled = true; ui.msg("開啟 Google 登入視窗…");
   try {
-    await signInWithPopup(auth, provider);
+    await signInWithPopup(auth, provider);   // 在點擊當下直接開彈出視窗（iPhone 也用這個，不用整頁跳轉）
+    popupBlocks = 0;
   } catch (e) {
     const code = (e && e.code) || "";
-    if (code === "auth/popup-blocked" || code === "auth/operation-not-supported-in-this-environment" || code === "auth/web-storage-unsupported") {
-      ui.msg("改用整頁跳轉登入…");
-      try { await signInWithRedirect(auth, provider); return; } catch (e2) { showLogin("登入失敗：" + ((e2 && e2.code) || e2.message || e2), true); }
+    if (code === "auth/popup-blocked") {
+      popupBlocks += 1;
+      if (popupBlocks >= 2 && redirectSafe()) {
+        ui.msg("改用整頁跳轉登入…");
+        try { await signInWithRedirect(auth, provider); return; } catch (e2) { showLogin(friendlyAuthError(e2), true); }
+      } else {
+        showLogin(isIOS()
+          ? "瀏覽器擋住了登入視窗，請再按一次「用學校信箱登入」。\n還是不行的話：iPhone「設定」→ Safari → 關閉「阻擋彈出式視窗」，再回來登入。"
+          : "瀏覽器擋住了登入視窗，請再按一次登入，或允許這個網站開啟彈出式視窗。", true);
+      }
+    } else if (code === "auth/operation-not-supported-in-this-environment" || code === "auth/web-storage-unsupported") {
+      showLogin("這個瀏覽器不支援 Google 登入（可能是無痕模式或 App 內建瀏覽器）。\n請改用 Safari 或 Chrome 一般分頁開啟。", true);
     } else if (code === "auth/popup-closed-by-user" || code === "auth/cancelled-popup-request") {
       showLogin("登入視窗已關閉，再按一次就好。");
     } else if (code === "auth/unauthorized-domain") {
       showLogin("這個網址尚未加入 Firebase 已授權網域。", true);
     } else {
-      showLogin("登入失敗：" + (code || (e && e.message) || e), true);
+      showLogin(friendlyAuthError(e), true);
     }
   } finally { busy = false; if ($g("ap-login")) $g("ap-login").disabled = false; }
+}
+function friendlyAuthError(e) {
+  const code = (e && e.code) || "";
+  if (code === "auth/missing-initial-state" || /initial state/i.test((e && e.message) || ""))
+    return "登入沒有完成（瀏覽器擋住了跨網站的登入資料）。\n請再按一次「用學校信箱登入」，會改用彈出視窗登入。";
+  if (code === "auth/network-request-failed") return "網路連線不穩，登入沒有完成，請確認網路後再按一次登入。";
+  if (code === "auth/too-many-requests") return "登入嘗試太多次，請稍等一下再試。";
+  if (code === "auth/user-disabled") return "這個帳號已被停用。";
+  if (code === "auth/internal-error") return "登入時發生暫時錯誤，請再按一次登入。";
+  return "登入沒有完成（" + (code || (e && e.message) || "未知錯誤") + "），請再按一次登入。";
 }
 async function rejectAccount(user) {
   const em = (user && user.email) || "這個帳號";
@@ -1002,13 +1056,14 @@ $g("ap-copy").addEventListener("click", async () => {
   }
 });
 
+restoreHash();
 // Show the in-app-browser hint immediately (don't wait on Auth), and try LINE's external-browser param once.
 const leavingLine = maybeRedirectLine();
 if (leavingLine || inAppBrowser()) showIabGate("");
 
 
 setPersistence(auth, browserLocalPersistence).catch(() => {});
-getRedirectResult(auth).catch((e) => { if (e && e.code) showLogin("登入失敗：" + e.code, true); });
+getRedirectResult(auth).catch((e) => { if (e && (e.code || e.message)) showLogin(friendlyAuthError(e), true); });
 onAuthStateChanged(auth, (u) => { onUser(u); });
 
 </script>
